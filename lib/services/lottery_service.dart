@@ -1,17 +1,23 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models/draw_result.dart';
 import '../models/jackpot.dart';
 
 class LotteryService {
-  // SELAE (Loterías y Apuestas del Estado) endpoints
-  static const String _selaeBaseUrl = 'https://www.loteriasyapuestas.es/servicios';
-  // ONCE endpoints
-  static const String _onceBaseUrl = 'https://www.once.es';
+  // Direct API URLs (for mobile apps - no CORS issues)
+  static const String _selaeDirectUrl = 'https://www.loteriasyapuestas.es/servicios';
+  static const String _onceDirectUrl = 'https://www.once.es';
+
+  // Proxy URL for web (Cloudflare Worker - set after deploying)
+  static const String _proxyBaseUrl = 'https://suerteya-api.vegabytes.workers.dev';
+
+  // Use proxy on web, direct on mobile
+  String get _selaeBaseUrl => kIsWeb ? '$_proxyBaseUrl/api/selae' : _selaeDirectUrl;
+  String get _onceBaseUrl => kIsWeb ? '$_proxyBaseUrl/api/once' : '$_onceDirectUrl/servicios';
 
   // --- SELAE Results ---
 
-  /// Fetches latest results for a SELAE game
   Future<DrawResult?> getSelaeResult(int gameId, {DateTime? date}) async {
     try {
       final gameCode = _selaeGameCode(gameId);
@@ -21,9 +27,16 @@ class LotteryService {
           ? '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}'
           : '';
 
-      final url = dateStr.isEmpty
-          ? '$_selaeBaseUrl/ultimoResultado?juego=$gameCode'
-          : '$_selaeBaseUrl/resultados?juego=$gameCode&fecha=$dateStr';
+      String url;
+      if (kIsWeb) {
+        url = dateStr.isEmpty
+            ? '$_selaeBaseUrl/resultado?juego=$gameCode'
+            : '$_selaeBaseUrl/resultado?juego=$gameCode&fecha=$dateStr';
+      } else {
+        url = dateStr.isEmpty
+            ? '$_selaeDirectUrl/ultimoResultado?juego=$gameCode'
+            : '$_selaeDirectUrl/resultados?juego=$gameCode&fecha=$dateStr';
+      }
 
       final response = await http.get(
         Uri.parse(url),
@@ -34,16 +47,16 @@ class LotteryService {
         return _parseSelaeResult(gameId, response.body);
       }
     } catch (e) {
-      // Log error, return null
+      // Silently fail - UI handles null results
     }
     return null;
   }
 
-  /// Fetches latest jackpots from SELAE
   Future<List<Jackpot>> getSelaeJackpots() async {
     try {
+      final url = kIsWeb ? '$_selaeBaseUrl/botes' : '$_selaeDirectUrl/botes';
       final response = await http.get(
-        Uri.parse('$_selaeBaseUrl/botes'),
+        Uri.parse(url),
         headers: {'Accept': 'application/json'},
       );
 
@@ -51,16 +64,18 @@ class LotteryService {
         return _parseSelaeJackpots(response.body);
       }
     } catch (e) {
-      // Log error
+      // Silently fail
     }
     return [];
   }
 
-  /// Checks a SELAE ticket by its number/code
   Future<Map<String, dynamic>?> checkSelaeTicket(String code) async {
     try {
+      final url = kIsWeb
+          ? '$_selaeBaseUrl/comprobar?codigo=$code'
+          : '$_selaeDirectUrl/premioDecimoWeb?codigo=$code';
       final response = await http.get(
-        Uri.parse('$_selaeBaseUrl/premioDecimoWeb?codigo=$code'),
+        Uri.parse(url),
         headers: {'Accept': 'application/json'},
       );
 
@@ -68,7 +83,7 @@ class LotteryService {
         return json.decode(response.body) as Map<String, dynamic>;
       }
     } catch (e) {
-      // Log error
+      // Silently fail
     }
     return null;
   }
@@ -84,10 +99,16 @@ class LotteryService {
           ? '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}'
           : '';
 
-      // ONCE provides results via their public JSON endpoints
-      final url = dateStr.isEmpty
-          ? '$_onceBaseUrl/servicios/resultado-sorteo/$gameCode/ultimo'
-          : '$_onceBaseUrl/servicios/resultado-sorteo/$gameCode/fecha/$dateStr';
+      String url;
+      if (kIsWeb) {
+        url = dateStr.isEmpty
+            ? '$_onceBaseUrl/resultado/$gameCode/ultimo'
+            : '$_onceBaseUrl/resultado/$gameCode/fecha/$dateStr';
+      } else {
+        url = dateStr.isEmpty
+            ? '$_onceDirectUrl/servicios/resultado-sorteo/$gameCode/ultimo'
+            : '$_onceDirectUrl/servicios/resultado-sorteo/$gameCode/fecha/$dateStr';
+      }
 
       final response = await http.get(
         Uri.parse(url),
@@ -98,7 +119,7 @@ class LotteryService {
         return _parseOnceResult(gameId, response.body);
       }
     } catch (e) {
-      // Log error
+      // Silently fail
     }
     return null;
   }
@@ -119,7 +140,6 @@ class LotteryService {
     final onceIds = [10, 11, 27];
 
     final futures = <Future<DrawResult?>>[];
-
     for (final id in selaeIds) {
       futures.add(getSelaeResult(id));
     }
@@ -138,30 +158,16 @@ class LotteryService {
 
   String? _selaeGameCode(int id) {
     const codes = {
-      1: 'LAPR',
-      2: 'BONO',
-      3: 'ELGR',
-      9: 'LNAC',
-      13: 'LAQU',
-      14: 'EURO',
-      16: 'LOTU',
-      17: 'QUPL',
-      18: 'QGOL',
-      38: 'EDMS',
+      1: 'LAPR', 2: 'BONO', 3: 'ELGR', 9: 'LNAC', 13: 'LAQU',
+      14: 'EURO', 16: 'LOTU', 17: 'QUPL', 18: 'QGOL', 38: 'EDMS',
     };
     return codes[id];
   }
 
   String? _onceGameCode(int id) {
     const codes = {
-      10: 'cupon',
-      11: 'cuponazo',
-      12: 'finde',
-      19: 'super7-39',
-      22: 'superonce',
-      27: 'eurojackpot',
-      35: 'triplex',
-      36: 'midia',
+      10: 'cupon', 11: 'cuponazo', 12: 'finde', 19: 'super7-39',
+      22: 'superonce', 27: 'eurojackpot', 35: 'triplex', 36: 'midia',
     };
     return codes[id];
   }
@@ -171,7 +177,6 @@ class LotteryService {
       final data = json.decode(body);
       if (data == null) return null;
 
-      // SELAE returns different formats per game, normalize them
       final Map<String, dynamic> resultData =
           data is List ? (data.isNotEmpty ? data[0] : {}) : data;
 
@@ -179,7 +184,6 @@ class LotteryService {
       final extraNumbers = <ResultNumber>[];
       final prizes = <Prize>[];
 
-      // Parse combination
       if (resultData.containsKey('combinacion')) {
         final combo = resultData['combinacion'] as String? ?? '';
         final parts = combo.split(' - ');
@@ -192,7 +196,6 @@ class LotteryService {
         }
       }
 
-      // Parse complementario/reintegro
       if (resultData.containsKey('complementario')) {
         extraNumbers.add(ResultNumber(
           value: resultData['complementario'].toString(),
@@ -214,7 +217,6 @@ class LotteryService {
         }
       }
 
-      // Parse prizes
       if (resultData.containsKey('escrutinio')) {
         final scrutiny = resultData['escrutinio'] as List<dynamic>? ?? [];
         for (final p in scrutiny) {
@@ -235,8 +237,7 @@ class LotteryService {
                 (resultData['fecha_sorteo'] ?? resultData['fecha'] ?? '')
                     .toString()) ??
             DateTime.now(),
-        drawNumber:
-            int.tryParse((resultData['numero'] ?? '').toString()),
+        drawNumber: int.tryParse((resultData['numero'] ?? '').toString()),
         mainNumbers: mainNumbers,
         extraNumbers: extraNumbers,
         prizes: prizes,
@@ -256,7 +257,6 @@ class LotteryService {
       final extraNumbers = <ResultNumber>[];
       final prizes = <Prize>[];
 
-      // ONCE games typically return numero premiado + serie
       if (data.containsKey('numeroPremiado')) {
         mainNumbers.add(ResultNumber(value: data['numeroPremiado'].toString()));
       }
@@ -267,7 +267,6 @@ class LotteryService {
         ));
       }
 
-      // Parse premios
       if (data.containsKey('premios')) {
         final premiosList = data['premios'] as List<dynamic>? ?? [];
         for (final p in premiosList) {
@@ -283,9 +282,7 @@ class LotteryService {
       return DrawResult(
         gameId: gameId,
         gameName: data['nombre'] as String? ?? '',
-        date: DateTime.tryParse(
-                (data['fecha'] ?? '').toString()) ??
-            DateTime.now(),
+        date: DateTime.tryParse((data['fecha'] ?? '').toString()) ?? DateTime.now(),
         mainNumbers: mainNumbers,
         extraNumbers: extraNumbers,
         prizes: prizes,
@@ -306,9 +303,7 @@ class LotteryService {
           gameId: _gameIdFromSelaeCode(gameCode),
           gameName: item['nombre'] as String? ?? '',
           amount: double.tryParse((item['bote'] ?? '0').toString()) ?? 0,
-          nextDraw: DateTime.tryParse(
-                  (item['fecha'] ?? '').toString()) ??
-              DateTime.now(),
+          nextDraw: DateTime.tryParse((item['fecha'] ?? '').toString()) ?? DateTime.now(),
         );
       }).toList();
     } catch (e) {
@@ -318,16 +313,8 @@ class LotteryService {
 
   int _gameIdFromSelaeCode(String code) {
     const ids = {
-      'LAPR': 1,
-      'BONO': 2,
-      'ELGR': 3,
-      'LNAC': 9,
-      'LAQU': 13,
-      'EURO': 14,
-      'LOTU': 16,
-      'QUPL': 17,
-      'QGOL': 18,
-      'EDMS': 38,
+      'LAPR': 1, 'BONO': 2, 'ELGR': 3, 'LNAC': 9, 'LAQU': 13,
+      'EURO': 14, 'LOTU': 16, 'QUPL': 17, 'QGOL': 18, 'EDMS': 38,
     };
     return ids[code] ?? 0;
   }
