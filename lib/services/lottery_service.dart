@@ -10,7 +10,7 @@ class LotteryService {
   static const String _onceDirectUrl = 'https://www.once.es';
 
   // Proxy URL for web (Cloudflare Worker - set after deploying)
-  static const String _proxyBaseUrl = 'https://suerteya-api.vegabytes.workers.dev';
+  static const String _proxyBaseUrl = 'https://suerteya-api.acastillocampillo.workers.dev';
 
   // Use proxy on web, direct on mobile
   String get _selaeBaseUrl => kIsWeb ? '$_proxyBaseUrl/api/selae' : _selaeDirectUrl;
